@@ -17,7 +17,7 @@
     "clsx": "^2",
     "jose": "^5",
     "lucide-react": "^0.471",
-    "next": "15.3.4",
+    "next": "15.3.8",
     "pdfjs-dist": "3.11.174",
     "photoswipe": "^5.4.4",
     "react": "^19",
