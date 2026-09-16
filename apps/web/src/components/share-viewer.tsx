@@ -301,13 +301,13 @@ export function ShareViewer({ share }: { share: any }) {
               </div>
               <h1 className="mt-1 truncate text-2xl font-bold tracking-tight text-slate-800">{data.isFolder ? 'Shared Folder' : 'Shared File'}</h1>
               <div className="mt-2 flex items-center gap-2">
-                <p className="text-sm text-slate-500">Read-only viewer • {data.accessType === 'PUBLIC' ? 'Public link' : 'Authorized user'}</p>
-                {!data.isFolder && (effectiveCategory({ mimeType: data.mimeType, name: data.name, category: data.category }) === 'images' || effectiveMime({ mimeType: data.mimeType, name: data.name }).startsWith('image/')) && (
+                <p className="text-sm text-slate-500">{data.readOnly ? 'Read-only' : 'Shared'} viewer • {data.accessType === 'PUBLIC' ? 'Public link' : 'Authorized user'}</p>
+                {!data.isFolder && (
                   <a
                     href={addDownloadUrl({ relativePath: data.relativePath, name: data.name })}
                     download={data.name}
                     className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-600"
-                    title="Download image"
+                    title="Download file"
                   >
                     <Download size={14} />
                     Download
@@ -347,7 +347,14 @@ export function ShareViewer({ share }: { share: any }) {
                 <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
                   {filteredItems.map((item) => (
                     <button key={item.relativePath} onDoubleClick={() => openItem(item)} onClick={() => openItem(item)} className="group rounded-2xl bg-white p-4 text-left shadow-sm ring-1 ring-slate-200/70 transition hover:-translate-y-0.5 hover:shadow-md">
-                      <div className="flex items-start justify-between gap-3"><div className="rounded-2xl bg-slate-50 p-3">{getItemIcon(item, 26)}</div><Eye size={16} className="text-slate-300 opacity-0 transition group-hover:opacity-100" /></div>
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="rounded-2xl bg-slate-50 p-3">{getItemIcon(item, 26)}</div>
+                        {item.isFolder ? <Eye size={16} className="text-slate-300 opacity-0 transition group-hover:opacity-100" /> : (
+                          <a href={addDownloadUrl(item)} download={item.name} onClick={(e) => e.stopPropagation()} className="rounded-lg p-1.5 text-slate-400 opacity-0 transition hover:bg-indigo-50 hover:text-indigo-600 group-hover:opacity-100" title="Download">
+                            <Download size={16} />
+                          </a>
+                        )}
+                      </div>
                       <p className="mt-4 truncate text-sm font-semibold text-slate-800 group-hover:text-indigo-600">{item.name}</p>
                       <p className="mt-1 text-xs text-slate-400">{item.isFolder ? 'Folder' : `${formatBytes(item.size)} • ${formatDate(item.modifiedAt)}`}</p>
                     </button>
@@ -355,8 +362,8 @@ export function ShareViewer({ share }: { share: any }) {
                 </div>
               ) : (
                 <div className="overflow-x-auto rounded-2xl bg-white shadow-sm ring-1 ring-slate-200/70">
-                  <table className="w-full text-left text-sm"><thead className="border-b border-slate-100 text-xs font-semibold text-slate-400"><tr><th className="px-4 py-3">Name</th><th className="px-4 py-3">Size</th><th className="px-4 py-3">Modified</th></tr></thead>
-                    <tbody className="divide-y divide-slate-100">{filteredItems.map((item) => <tr key={item.relativePath} onClick={() => openItem(item)} className="cursor-pointer hover:bg-slate-50"><td className="px-4 py-3"><div className="flex items-center gap-3 font-medium text-slate-700">{getItemIcon(item, 19)}<span className="truncate">{item.name}</span></div></td><td className="px-4 py-3 text-xs text-slate-500">{item.isFolder ? '-' : formatBytes(item.size)}</td><td className="px-4 py-3 text-xs text-slate-400">{formatDate(item.modifiedAt)}</td></tr>)}</tbody>
+                  <table className="w-full text-left text-sm"><thead className="border-b border-slate-100 text-xs font-semibold text-slate-400"><tr><th className="px-4 py-3">Name</th><th className="px-4 py-3">Size</th><th className="px-4 py-3">Modified</th><th className="px-4 py-3 text-right w-16"></th></tr></thead>
+                    <tbody className="divide-y divide-slate-100">{filteredItems.map((item) => <tr key={item.relativePath} onClick={() => openItem(item)} className="cursor-pointer hover:bg-slate-50"><td className="px-4 py-3"><div className="flex items-center gap-3 font-medium text-slate-700">{getItemIcon(item, 19)}<span className="truncate">{item.name}</span></div></td><td className="px-4 py-3 text-xs text-slate-500">{item.isFolder ? '-' : formatBytes(item.size)}</td><td className="px-4 py-3 text-xs text-slate-400">{formatDate(item.modifiedAt)}</td><td className="px-4 py-3 text-right">{!item.isFolder && <a href={addDownloadUrl(item)} download={item.name} onClick={(e) => e.stopPropagation()} className="inline-flex rounded-lg p-1.5 text-slate-400 hover:bg-indigo-50 hover:text-indigo-600" title="Download"><Download size={16} /></a>}</td></tr>)}</tbody>
                   </table>
                 </div>
               )}

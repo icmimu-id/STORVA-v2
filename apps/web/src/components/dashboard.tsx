@@ -8,7 +8,6 @@ import { formatDate } from '@/lib/format-date'
 import {
   LayoutDashboard,
   FolderOpen,
-  Clock,
   Star,
   Trash2,
   HardDrive,
@@ -37,7 +36,6 @@ import {
 const NAV_ITEMS = [
   { label: 'Dashboard', icon: LayoutDashboard, path: '/' },
   { label: 'My Files', icon: FolderOpen, path: '/files' },
-  { label: 'Recent', icon: Clock, path: '/recent' },
   { label: 'Favorites', icon: Star, path: '/favorites' },
   { label: 'Trash', icon: Trash2, path: '/trash' },
 ]
@@ -102,7 +100,11 @@ export function Sidebar({ shareToken }: { shareToken?: string } = {}) {
       {/* Mobile Header */}
       <div className="md:hidden flex items-center justify-between p-4 bg-white/80 backdrop-blur-md sticky top-0 z-50 border-b border-slate-100">
         <button onClick={() => setIsMobileOpen(true)} className="p-2 text-slate-600"><Menu size={20} /></button>
-        <Link href="/" className="font-extrabold text-xl bg-clip-text text-transparent bg-gradient-to-r from-indigo-600 to-indigo-400">Storva.</Link>
+        {shareToken ? (
+          <span className="font-extrabold text-xl bg-clip-text text-transparent bg-gradient-to-r from-indigo-600 to-indigo-400">Storva.</span>
+        ) : (
+          <Link href="/" className="font-extrabold text-xl bg-clip-text text-transparent bg-gradient-to-r from-indigo-600 to-indigo-400">Storva.</Link>
+        )}
         {user ? (
           <div className="flex items-center gap-2">
             <span className="text-xs font-semibold text-slate-700">{user.username}</span>
@@ -122,7 +124,11 @@ export function Sidebar({ shareToken }: { shareToken?: string } = {}) {
           <div className="absolute inset-0 bg-black/50" onClick={() => setIsMobileOpen(false)} />
           <aside className="relative w-[280px] bg-indigo-600 p-6 text-indigo-100 flex flex-col">
             <button onClick={() => setIsMobileOpen(false)} className="absolute top-4 right-4 p-2"><X /></button>
-            <Link href="/" className="mb-12 text-center font-extrabold text-3xl tracking-tight text-white">Storva.</Link>
+            {shareToken ? (
+              <span className="mb-12 block text-center font-extrabold text-3xl tracking-tight text-white">Storva.</span>
+            ) : (
+              <Link href="/" className="mb-12 text-center font-extrabold text-3xl tracking-tight text-white">Storva.</Link>
+            )}
             <nav className="flex-1 space-y-4">
               {(user ? NAV_ITEMS : [{ label: 'My Files', icon: FolderOpen, path: guestMyFilesPath }]).map((item) => (
                 <Link
@@ -161,7 +167,11 @@ export function Sidebar({ shareToken }: { shareToken?: string } = {}) {
       {/* Desktop Sidebar */}
       <aside className="hidden md:flex h-full min-h-0 w-[240px] flex-col overflow-hidden rounded-[2rem] bg-indigo-600 pt-12 p-6 pb-6 text-indigo-100">
         <div className="mb-9 flex justify-center">
-          <Link href="/" className="font-extrabold text-5xl tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white to-indigo-200">Storva.</Link>
+          {shareToken ? (
+            <span className="font-extrabold text-5xl tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white to-indigo-200">Storva.</span>
+          ) : (
+            <Link href="/" className="font-extrabold text-5xl tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white to-indigo-200">Storva.</Link>
+          )}
         </div>
 
         <nav className="flex-1 space-y-4">

@@ -1,4 +1,5 @@
 import { repository } from '@/lib/repository'
+import { getCurrentUser } from '@/lib/authUtils'
 import { NextRequest, NextResponse } from 'next/server'
 
 const EXT_MIME: Record<string, string> = {
@@ -23,7 +24,11 @@ function getCategory(file: any) {
   return 'others'
 }
 
-export async function GET(_req: NextRequest, { params }: { params: Promise<{ token: string }> }) {
+function normalizePath(value: string) {
+  return value.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
+}
+
+export async function GET(req: NextRequest, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params
   try {
     const share = await repository.shareLink.findUnique({ where: { token } })
@@ -34,6 +39,25 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ tok
 
     const file = await repository.fileMetadata.findUnique({ where: { id: share.fileId } })
     if (!file) return NextResponse.json({ error: 'Shared file not found' }, { status: 404 })
+
+    // Check privacy rule
+    const currentUser = await getCurrentUser(req)
+    const rules: any[] = await repository.privacyRule.findMany({}).catch(() => [])
+    const target = normalizePath(file.relativePath)
+    const matchedRule = rules
+      .filter((r) => {
+        const rp = normalizePath(r.relativePath)
+        return target === rp || target.startsWith(`${rp}/`)
+      })
+      .sort((a, b) => normalizePath(b.relativePath).length - normalizePath(a.relativePath).length)[0]
+
+    if (matchedRule?.isPrivate) {
+      const isAdmin = currentUser?.role?.toLowerCase() === 'admin'
+      const allowed: string[] = JSON.parse(matchedRule.allowedUsers || '[]')
+      if (!isAdmin && (!currentUser || !allowed.includes(currentUser.id))) {
+        return NextResponse.json({ error: 'Access denied to private content' }, { status: 403 })
+      }
+    }
 
     return NextResponse.json({
       id: share.id,

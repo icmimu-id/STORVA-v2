@@ -17,7 +17,7 @@ export function useDashboardData(userId?: string) {
       .then((d) => setActivity(d.items || []) )
       .catch(() => {})
     if (userId) {
-      fetch('/api/favorites?userId=' + encodeURIComponent(userId))
+      fetch('/api/favorites', { credentials: 'include' })
         .then((r) => r.json())
         .then((d) => setFavorites(d.items || []))
         .catch(() => {})

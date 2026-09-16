@@ -1,17 +1,37 @@
 import { spawnSync } from 'node:child_process'
 import process from 'node:process'
+import path from 'node:path'
 
 const pnpmCli = process.env.npm_execpath
 const fallbackPnpm = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 
+// During pnpm lifecycle scripts, npm_execpath usually points to pnpm's JS
+// entrypoint, which needs to be run through the current Node executable to
+// avoid Windows spawnSync EINVAL issues caused by spawning pnpm.cmd directly.
+// However, newer pnpm releases (installed as a standalone compiled binary,
+// e.g. via corepack) set npm_execpath to a native executable instead
+// (pnpm.exe on Windows). That binary must be spawned directly — running it
+// through `node <path-to.exe>` makes Node try to load the .exe as an ESM
+// module and crash with ERR_UNKNOWN_FILE_EXTENSION. Only route through Node
+// when npm_execpath actually looks like a JS file.
+const JS_ENTRYPOINT_EXTS = new Set(['.js', '.cjs', '.mjs'])
+const pnpmCliIsJs = pnpmCli && JS_ENTRYPOINT_EXTS.has(path.extname(pnpmCli).toLowerCase())
+
 function run(label, args) {
   console.log(`[STORVA] ${label}`)
 
-  // During pnpm lifecycle scripts, npm_execpath points to the actual pnpm
-  // JavaScript entrypoint. Running it with the current Node executable avoids
-  // Windows spawnSync EINVAL issues caused by spawning pnpm.cmd directly.
-  const command = pnpmCli ? process.execPath : fallbackPnpm
-  const commandArgs = pnpmCli ? [pnpmCli, ...args] : args
+  let command
+  let commandArgs
+  if (pnpmCliIsJs) {
+    command = process.execPath
+    commandArgs = [pnpmCli, ...args]
+  } else if (pnpmCli) {
+    command = pnpmCli
+    commandArgs = args
+  } else {
+    command = fallbackPnpm
+    commandArgs = args
+  }
 
   const result = spawnSync(command, commandArgs, {
     stdio: 'inherit',

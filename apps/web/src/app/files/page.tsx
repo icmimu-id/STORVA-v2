@@ -12,7 +12,8 @@ import {
   List as ListIcon, ChevronRight, Download, Trash2, Edit2,
   FileText, Image as ImageIcon, Video, Music, Archive, File,
   X, Eye, RefreshCw, CheckCircle, AlertCircle, ArrowUpDown,
-  HardDrive, ChevronDown, ArrowLeft, Lock, Unlock, Share2, Copy, Plus
+  HardDrive, ChevronDown, ArrowLeft, Lock, Unlock, Share2, Copy, Plus, MoreVertical, Star,
+  Pause, XCircle
 } from 'lucide-react'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -28,6 +29,18 @@ type FileItem = {
   modifiedAt: string
   createdAt: string
   isPrivate?: boolean
+  isFavorite?: boolean
+  volumeId?: number | null
+}
+
+type UploadFile = {
+  id: string
+  file: File
+  status: 'pending' | 'uploading' | 'paused' | 'completed' | 'failed' | 'cancelled'
+  progress: number
+  bytesUploaded: number
+  bytesTotal: number
+  xhr?: XMLHttpRequest
 }
 
 type Volume = {
@@ -218,8 +231,22 @@ function FilesContent() {
   const [error, setError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null)
   const [sortBy] = useState<'name' | 'size' | 'date'>('name')
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
+
+  useEffect(() => {
+    if (!openMenuId) return
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!(event.target instanceof Element) || !event.target.closest('[data-file-card-menu]')) {
+        setOpenMenuId(null)
+      }
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown)
+    return () => document.removeEventListener('pointerdown', handlePointerDown)
+  }, [openMenuId])
 
   // Modals
   const [isNewFolderOpen, setIsNewFolderOpen] = useState(false)
@@ -247,8 +274,10 @@ function FilesContent() {
 
   // Upload
   const [isUploading, setIsUploading] = useState(false)
+  const [uploadQueue, setUploadQueue] = useState<UploadFile[]>([])
   const [isDragging, setIsDragging] = useState(false)
   const [isFabOpen, setIsFabOpen] = useState(false)
+  const [isProgressModalOpen, setIsProgressModalOpen] = useState(false)
   const fabRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -266,6 +295,33 @@ function FilesContent() {
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     setToast({ message, type })
     setTimeout(() => setToast(null), 3500)
+  }
+
+  const toggleFavorite = async (item: FileItem) => {
+    const isFavorite = !item.isFavorite
+    setItems((prev) => prev.map((i) => i.relativePath === item.relativePath ? { ...i, isFavorite } : i))
+    try {
+      const res = await fetch('/api/favorites', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          relativePath: item.relativePath,
+          name: item.name,
+          isFolder: item.isFolder,
+          size: item.size,
+          mimeType: item.mimeType,
+          extension: item.extension,
+          isFavorite,
+          volumeId: activeVol?.id,
+        }),
+      })
+      if (!res.ok) throw new Error('Gagal update favorite')
+      showToast(isFavorite ? 'Ditambahkan ke favorit' : 'Dihapus dari favorit')
+    } catch (err: any) {
+      setItems((prev) => prev.map((i) => i.relativePath === item.relativePath ? { ...i, isFavorite: !isFavorite } : i))
+      showToast(err.message, 'error')
+    }
   }
 
   useEffect(() => {
@@ -411,7 +467,10 @@ function FilesContent() {
         throw new Error(data.error || `Failed to load files (HTTP ${res.status})`)
       }
       const data = await res.json()
-      setItems(data.items || [])
+      const favsRes = await fetch('/api/favorites', { credentials: 'include' }).catch(() => null)
+      const favsData = await favsRes?.json().catch(() => null)
+      const favKeys = new Set<string>((favsData?.items || []).map((f: any) => `${f.volumeId ?? ''}:${f.relativePath}`))
+      setItems((data.items || []).map((item: any) => ({ ...item, isFavorite: favKeys.has(`${activeVol.id}:${item.relativePath}`), volumeId: activeVol.id })))
     } catch (err: any) {
       setError(err.message || 'Unable to connect to Storage Drive')
     } finally {
@@ -498,21 +557,122 @@ function FilesContent() {
     } catch (err: any) { showToast(err.message, 'error') }
   }
 
+  const uploadTotals = useMemo(() => {
+    const visible = uploadQueue.filter((item) => item.status !== 'cancelled')
+    const bytesTotal = visible.reduce((sum, item) => sum + item.bytesTotal, 0)
+    const bytesUploaded = visible.reduce((sum, item) => sum + item.bytesUploaded, 0)
+    const completed = uploadQueue.filter((item) => item.status === 'completed').length
+    const failed = uploadQueue.filter((item) => item.status === 'failed').length
+    const paused = uploadQueue.filter((item) => item.status === 'paused').length
+    const active = uploadQueue.filter((item) => item.status === 'uploading').length
+    return {
+      bytesTotal,
+      bytesUploaded,
+      completed,
+      failed,
+      paused,
+      active,
+      totalFiles: uploadQueue.length,
+      progress: bytesTotal ? Math.round((bytesUploaded / bytesTotal) * 100) : 0,
+    }
+  }, [uploadQueue])
+
+  const finishUploadBatchIfDone = useCallback(() => {
+    setUploadQueue((current) => {
+      const done = current.length > 0 && current.every((item) => ['completed', 'failed', 'paused', 'cancelled'].includes(item.status))
+      if (!done) return current
+      setIsUploading(false)
+      const completed = current.filter((item) => item.status === 'completed').length
+      const failed = current.filter((item) => item.status === 'failed').length
+      if (completed) showToast(`${completed} file(s) uploaded${failed ? `, ${failed} failed` : ''}`, failed ? 'error' : 'success')
+      loadFiles()
+      return current
+    })
+  }, [loadFiles])
+
+  const uploadSingleFile = useCallback((item: UploadFile) => {
+    if (!activeVol) return
+    const xhr = new XMLHttpRequest()
+    const formData = new FormData()
+    const query = new URLSearchParams()
+    formData.append('files', item.file)
+    query.set('vol', String(activeVol.id))
+    if (currentPath) query.set('path', currentPath)
+
+    xhr.upload.onprogress = (event) => {
+      if (!event.lengthComputable) return
+      setUploadQueue((current) => current.map((upload) => upload.id === item.id ? {
+        ...upload,
+        bytesUploaded: Math.min(event.loaded, upload.bytesTotal),
+        progress: Math.round((event.loaded / upload.bytesTotal) * 100),
+      } : upload))
+    }
+
+    xhr.onload = () => {
+      const ok = xhr.status >= 200 && xhr.status < 300
+      setUploadQueue((current) => current.map((upload) => upload.id === item.id ? {
+        ...upload,
+        status: ok ? 'completed' : 'failed',
+        bytesUploaded: ok ? upload.bytesTotal : upload.bytesUploaded,
+        progress: ok ? 100 : upload.progress,
+        xhr: undefined,
+      } : upload))
+      if (!ok) showToast(`${item.file.name} gagal upload`, 'error')
+    }
+
+    xhr.onerror = () => {
+      setUploadQueue((current) => current.map((upload) => upload.id === item.id ? { ...upload, status: 'failed', xhr: undefined } : upload))
+      showToast(`${item.file.name} gagal upload`, 'error')
+    }
+
+    xhr.onabort = () => {
+      setUploadQueue((current) => current.map((upload) => upload.id === item.id ? { ...upload, xhr: undefined } : upload))
+    }
+
+    setUploadQueue((current) => current.map((upload) => upload.id === item.id ? { ...upload, status: 'uploading', xhr } : upload))
+    xhr.open('POST', `/api/agent/upload?${query.toString()}`)
+    xhr.send(formData)
+  }, [activeVol, currentPath])
+
+  useEffect(() => {
+    if (!isUploading) return
+    const active = uploadQueue.filter((item) => item.status === 'uploading').length
+    const slots = Math.max(0, 3 - active)
+    if (slots > 0) uploadQueue.filter((item) => item.status === 'pending').slice(0, slots).forEach(uploadSingleFile)
+    finishUploadBatchIfDone()
+  }, [finishUploadBatchIfDone, isUploading, uploadQueue, uploadSingleFile])
+
+  const pauseUploadFile = (id: string) => {
+    setUploadQueue((current) => current.map((item) => {
+      if (item.id !== id) return item
+      item.xhr?.abort()
+      return { ...item, status: 'paused', xhr: undefined }
+    }))
+  }
+
+  const cancelUploadFile = (id: string) => {
+    setUploadQueue((current) => current.map((item) => {
+      if (item.id !== id) return item
+      item.xhr?.abort()
+      return { ...item, status: 'cancelled', bytesUploaded: 0, progress: 0, xhr: undefined }
+    }))
+  }
+
   const handleFileUpload = async (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return
+    if (!activeVol) return showToast('No active storage volume', 'error')
+    const uploads: UploadFile[] = Array.from(fileList).map((file) => ({
+      id: `${file.name}-${file.size}-${file.lastModified}-${crypto.randomUUID()}`,
+      file,
+      status: 'pending',
+      progress: 0,
+      bytesUploaded: 0,
+      bytesTotal: file.size,
+    }))
+    setUploadQueue(uploads)
+    setIsProgressModalOpen(true)
+    setIsFabOpen(false)
     setIsUploading(true)
-    try {
-      const formData = new FormData()
-      Array.from(fileList).forEach((f) => formData.append('files', f))
-      const query = new URLSearchParams()
-      if (activeVol) query.set('vol', String(activeVol.id))
-      if (currentPath) query.set('path', currentPath)
-      const res = await fetch(`/api/agent/upload?${query.toString()}`, { method: 'POST', body: formData })
-      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Upload failed')
-      showToast(`Successfully uploaded ${fileList.length} file(s)`)
-      loadFiles()
-    } catch (err: any) { showToast(err.message, 'error') }
-    finally { setIsUploading(false) }
   }
 
   // ── Filter & Sort ──────────────────────────────────────────────────────────
@@ -714,7 +874,7 @@ function FilesContent() {
           />
           {user && (
             <div ref={fabRef} className="fixed bottom-13 right-6 z-40 flex flex-col items-end gap-3 md:hidden">
-              {isFabOpen && (
+              {!isUploading && isFabOpen && (
                 <div className="flex flex-col items-end gap-2">
                   <button
                     onClick={() => { setIsFabOpen(false); document.getElementById('file-upload-input-mobile')?.click() }}
@@ -739,7 +899,7 @@ function FilesContent() {
                 onClick={() => setIsFabOpen((open) => !open)}
                 aria-label={isFabOpen ? 'Close file actions' : 'Open file actions'}
                 aria-expanded={isFabOpen}
-                className={`flex h-14 w-14 items-center justify-center rounded-full bg-indigo-600 text-white shadow-lg shadow-indigo-500/35 transition duration-200 hover:bg-indigo-700 ${isFabOpen ? 'rotate-45' : ''}`}
+                className={`flex h-14 w-14 items-center justify-center rounded-full bg-indigo-600 text-white shadow-lg shadow-indigo-500/35 transition duration-200 hover:bg-indigo-700 ${isFabOpen ? 'rotate-45' : ''} ${isUploading ? 'hidden' : 'flex'}`}
               >
                 <Plus size={26} />
               </button>
@@ -798,50 +958,70 @@ function FilesContent() {
                       <div onClick={() => handleItemClick(item)} className="cursor-pointer">
                         {getItemIcon(item)}
                       </div>
-                      <div className="flex items-center gap-1 opacity-80 group-hover:opacity-100">
-                        {!item.isFolder && (
-                          <a
-                            href={addVolParam(`/api/agent/download?path=${encodeURIComponent(item.relativePath)}`)}
-                            download={item.name}
-                            title="Download"
-                            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-indigo-600"
-                          >
-                            <Download size={14} />
-                          </a>
-                        )}
-                        {user && (
-                          <button
-                            onClick={() => openShareModal(item)}
-                            title="Share link"
-                            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-indigo-600"
-                          >
-                            <Share2 size={14} />
-                          </button>
-                        )}
-                        {user?.role?.toLowerCase() === 'admin' && (
-                          <button
-                            onClick={() => openPrivacy(item)}
-                            title="Private access"
-                            className={`rounded-lg p-1.5 hover:bg-indigo-50 ${item.isPrivate ? 'text-indigo-600' : 'text-slate-400 hover:text-indigo-600'}`}
-                          >
-                            <Lock size={14} />
-                          </button>
-                        )}
-                        {user && (
-                          <button
-                            onClick={() => { setRenamingItem(item); setNewName(item.name) }}
-                            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-indigo-600"
-                          >
-                            <Edit2 size={14} />
-                          </button>
-                        )}
-                        {user && (
-                          <button
-                            onClick={() => setDeletingItem(item)}
-                            className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600"
-                          >
-                            <Trash2 size={14} />
-                          </button>
+                      <div className="relative" data-file-card-menu>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); toggleFavorite(item) }}
+                          className={`rounded-lg p-1.5 transition-colors ${item.isFavorite ? 'text-amber-500 hover:bg-amber-50' : 'text-slate-300 hover:bg-slate-100 hover:text-amber-500'}`}
+                          title={item.isFavorite ? 'Hapus dari favorit' : 'Tambah ke favorit'}
+                        >
+                          <Star size={16} fill={item.isFavorite ? 'currentColor' : 'none'} strokeWidth={2} />
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setOpenMenuId(openMenuId === (item.relativePath || item.name) ? null : (item.relativePath || item.name))
+                          }}
+                          className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-indigo-600"
+                        >
+                          <MoreVertical size={16} />
+                        </button>
+                        {openMenuId === (item.relativePath || item.name) && (
+                          <div className="absolute right-0 top-full z-20 mt-2 flex items-center gap-1 rounded-xl border border-slate-100 bg-white p-1.5 shadow-xl">
+                            {!item.isFolder && (
+                              <a
+                                href={addVolParam(`/api/agent/download?path=${encodeURIComponent(item.relativePath)}`)}
+                                download={item.name}
+                                title="Download"
+                                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-indigo-600"
+                              >
+                                <Download size={16} />
+                              </a>
+                            )}
+                            {user && (
+                              <button
+                                onClick={() => openShareModal(item)}
+                                title="Share link"
+                                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-indigo-600"
+                              >
+                                <Share2 size={16} />
+                              </button>
+                            )}
+                            {user?.role?.toLowerCase() === 'admin' && (
+                              <button
+                                onClick={() => openPrivacy(item)}
+                                title="Private access"
+                                className={`rounded-lg p-1.5 hover:bg-indigo-50 ${item.isPrivate ? 'text-indigo-600' : 'text-slate-400 hover:text-indigo-600'}`}
+                              >
+                                <Lock size={16} />
+                              </button>
+                            )}
+                            {user && (
+                              <button
+                                onClick={() => { setRenamingItem(item); setNewName(item.name) }}
+                                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-indigo-600"
+                              >
+                                <Edit2 size={16} />
+                              </button>
+                            )}
+                            {user && (
+                              <button
+                                onClick={() => setDeletingItem(item)}
+                                className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600"
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            )}
+                          </div>
                         )}
                       </div>
                     </div>
@@ -888,6 +1068,13 @@ function FilesContent() {
                         <td className="py-3 text-xs text-slate-400">{formatDate(item.modifiedAt)}</td>
                         <td className="py-3 pr-3 text-right">
                           <div className="flex items-center justify-end gap-1">
+                            <button
+                              onClick={() => toggleFavorite(item)}
+                              className={`rounded-lg p-1.5 transition-colors ${item.isFavorite ? 'text-amber-500 hover:bg-amber-50' : 'text-slate-300 hover:bg-slate-100 hover:text-amber-500'}`}
+                              title={item.isFavorite ? 'Hapus dari favorit' : 'Tambah ke favorit'}
+                            >
+                              <Star size={15} fill={item.isFavorite ? 'currentColor' : 'none'} strokeWidth={2} />
+                            </button>
                             {!item.isFolder && (
                               <>
                                 <button onClick={() => setPreviewItem(item)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-indigo-600"><Eye size={15} /></button>
@@ -1212,6 +1399,103 @@ function FilesContent() {
               )}
             </div>
           </div>
+        </div>
+      )}
+
+      {/* UPLOAD PROGRESS MODAL */}
+      {isProgressModalOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm" onMouseDown={(e) => { if (e.target === e.currentTarget) setIsProgressModalOpen(false) }}>
+          <div onMouseDown={(e) => e.stopPropagation()} className="flex max-h-[85vh] w-full max-w-lg flex-col rounded-[2rem] bg-white shadow-2xl ring-1 ring-slate-200 overflow-hidden">
+            <div className="flex items-center justify-between border-b border-slate-100 p-6 bg-slate-50/50">
+              <div>
+                <h3 className="text-lg font-bold text-slate-800">Upload Progress</h3>
+                <p className="text-xs text-slate-500">{uploadTotals.active} uploading • {uploadTotals.totalFiles} total</p>
+              </div>
+              <button onClick={() => setIsProgressModalOpen(false)} className="rounded-full p-2 text-slate-400 hover:bg-white hover:shadow-sm"><X size={20} /></button>
+            </div>
+
+            <div className="p-6 border-b border-slate-100">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm font-bold text-slate-700">{uploadTotals.progress}% Total</span>
+                <span className="text-xs font-medium text-slate-400">{formatBytes(uploadTotals.bytesUploaded)} / {formatBytes(uploadTotals.bytesTotal)}</span>
+              </div>
+              <div className="relative h-3 w-full overflow-hidden rounded-full bg-slate-100">
+                <div
+                  className="absolute left-0 top-0 h-full bg-indigo-600 transition-all duration-300 ease-out"
+                  style={{ width: `${uploadTotals.progress}%` }}
+                >
+                  <div className="absolute inset-0 bg-[linear-gradient(45deg,rgba(255,255,255,0.2)_25%,transparent_25%,transparent_50%,rgba(255,255,255,0.2)_50%,rgba(255,255,255,0.2)_75%,transparent_75%,transparent)] bg-[length:24px_24px] animate-[shimmer_2s_linear_infinite]" />
+                </div>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              {uploadQueue.map((item) => (
+                <div key={item.id} className={`group relative rounded-2xl border p-4 transition-all ${item.status === 'cancelled' ? 'hidden' : 'border-slate-100 bg-slate-50/30'}`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <FileText size={16} className={item.status === 'completed' ? 'text-emerald-500' : 'text-slate-400'} />
+                        <p className="truncate text-sm font-semibold text-slate-700">{item.file.name}</p>
+                      </div>
+                      <div className="mt-1 flex items-center gap-2 text-[10px] font-medium uppercase tracking-wider">
+                        <span className={
+                          item.status === 'uploading' ? 'text-indigo-600' :
+                          item.status === 'completed' ? 'text-emerald-600' :
+                          item.status === 'failed' ? 'text-rose-600' :
+                          item.status === 'paused' ? 'text-amber-600' : 'text-slate-400'
+                        }>
+                          {item.status}
+                        </span>
+                        <span className="text-slate-300">•</span>
+                        <span className="text-slate-400">{formatBytes(item.bytesUploaded)} / {formatBytes(item.bytesTotal)}</span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      {item.status === 'uploading' && (
+                        <button onClick={() => pauseUploadFile(item.id)} className="p-1.5 text-amber-500 hover:bg-amber-50 rounded-lg" title="Pause"><Pause size={14} /></button>
+                      )}
+                      {(item.status === 'pending' || item.status === 'uploading' || item.status === 'paused' || item.status === 'failed') && (
+                        <button onClick={() => cancelUploadFile(item.id)} className="p-1.5 text-rose-500 hover:bg-rose-50 rounded-lg" title="Cancel"><XCircle size={14} /></button>
+                      )}
+                    </div>
+                  </div>
+
+                  {item.status !== 'completed' && item.status !== 'failed' && (
+                    <div className="mt-3 relative h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+                      <div
+                        className={`absolute left-0 top-0 h-full transition-all duration-300 ${item.status === 'paused' ? 'bg-amber-400' : 'bg-indigo-500'}`}
+                        style={{ width: `${item.progress}%` }}
+                      />
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <div className="border-t border-slate-100 p-4 bg-slate-50/30 flex justify-end">
+              <button onClick={() => setIsProgressModalOpen(false)} className="rounded-xl bg-white border border-slate-200 px-6 py-2 text-sm font-bold text-slate-700 shadow-sm hover:bg-slate-50 transition">Minimize</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* FLOATING PROGRESS BUTTON */}
+      {isUploading && (
+        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-3">
+          <button
+            onClick={() => setIsProgressModalOpen(true)}
+            className="group flex h-14 items-center gap-3 rounded-full bg-indigo-600 pl-6 pr-4 text-white shadow-lg shadow-indigo-500/35 transition hover:bg-indigo-700"
+          >
+            <div className="flex flex-col items-start leading-none">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-200">Uploading</span>
+              <span className="mt-0.5 text-sm font-bold">{uploadTotals.progress}%</span>
+            </div>
+            <div className="relative flex h-8 w-8 items-center justify-center rounded-full bg-white/20">
+              <RefreshCw size={16} className="animate-spin" />
+            </div>
+          </button>
         </div>
       )}
     </main>

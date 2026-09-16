@@ -31,6 +31,23 @@ function withinRoot(root: string, target: string) {
   return Boolean(r) && t.startsWith(`${r}/`)
 }
 
+async function canAccessPrivatePath(path: string, user: any) {
+  const rules: any[] = await repository.privacyRule.findMany({}).catch(() => [])
+  const target = normalize(path)
+  const matchedRule = rules
+    .filter((r) => {
+      const rulePath = normalize(r.relativePath)
+      return target === rulePath || target.startsWith(`${rulePath}/`)
+    })
+    .sort((a, b) => normalize(b.relativePath).length - normalize(a.relativePath).length)[0]
+
+  if (!matchedRule?.isPrivate) return true
+  if (user?.role?.toLowerCase() === 'admin') return true
+
+  const allowed: string[] = JSON.parse(matchedRule.allowedUsers || '[]')
+  return Boolean(user && allowed.includes(user.id))
+}
+
 async function getShare(token: string) {
   const share = await repository.shareLink.findUnique({ where: { token } })
   if (!share) return null
@@ -84,6 +101,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ toke
     const root = normalize(file.relativePath)
     if (!withinRoot(root, requested)) {
       return NextResponse.json({ error: 'Path is outside shared item' }, { status: 403 })
+    }
+    if (!(await canAccessPrivatePath(requested, currentUser))) {
+      return NextResponse.json({ error: 'Access denied to private content' }, { status: 403 })
     }
 
     const agentSearch = new URLSearchParams()

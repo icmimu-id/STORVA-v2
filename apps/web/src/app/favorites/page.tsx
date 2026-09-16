@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { Sidebar, RightPanel } from '@/components/dashboard'
 import {
   Star,
@@ -30,6 +31,7 @@ type FileItem = {
   modifiedAt: string
   createdAt: string
   isFavorite?: boolean
+  volumeId?: number | null
 }
 
 function formatBytes(bytes: number = 0) {
@@ -59,21 +61,58 @@ function getItemIcon(item: FileItem) {
 }
 
 export default function FavoritesPage() {
+  const router = useRouter()
   const [items, setItems] = useState<FileItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [previewItem, setPreviewItem] = useState<FileItem | null>(null)
 
+  const openFolder = async (item: FileItem) => {
+    if (item.volumeId != null) {
+      router.push(`/files?vol=${item.volumeId}&path=${encodeURIComponent(item.relativePath)}`)
+      return
+    }
+
+    // Fallback for legacy favorites missing volumeId: probe accessible volumes
+    try {
+      const volRes = await fetch('/api/agent/volumes')
+      const volData = await volRes.json().catch(() => ({}))
+      const accessible = (volData.volumes || []).filter((v: any) => v.accessible)
+      for (const v of accessible) {
+        const checkRes = await fetch(`/api/agent/files?vol=${v.id}&path=${encodeURIComponent(item.relativePath)}`)
+        if (checkRes.ok) {
+          // Backfill volumeId asynchronously so future clicks are instant
+          fetch('/api/favorites', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ relativePath: item.relativePath, volumeId: v.id, isFavorite: true }),
+          }).catch(() => {})
+          router.push(`/files?vol=${v.id}&path=${encodeURIComponent(item.relativePath)}`)
+          return
+        }
+      }
+    } catch {}
+
+    // Fallback to path only
+    router.push(`/files?path=${encodeURIComponent(item.relativePath)}`)
+  }
+
   const loadFavorites = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      // First try to fetch from /api/favorites, fallback to agent files if needed
-      const res = await fetch('/api/agent/files')
-      if (!res.ok) throw new Error('Failed to load drive items')
+      const res = await fetch('/api/favorites', { credentials: 'include' })
+      if (!res.ok) throw new Error('Failed to load favorites')
       const data = await res.json()
-      // Display items
-      setItems(data.items || [])
+      setItems((data.items || []).map((item: any) => ({
+        ...item,
+        volumeId: item.volumeId ?? null,
+        size: Number(item.size) || 0,
+        category: item.category || 'others',
+        modifiedAt: item.modifiedAt || item.updatedAt || item.createdAt || new Date().toISOString(),
+        createdAt: item.createdAt || new Date().toISOString(),
+      })))
     } catch (err: any) {
       setError(err.message || 'Error loading favorites')
     } finally {
@@ -156,7 +195,13 @@ export default function FavoritesPage() {
                       <tr key={item.relativePath || item.name} className="group hover:bg-slate-50/80 transition">
                         <td className="py-3 pl-3 font-medium text-slate-700">
                           <div
-                            onClick={() => !item.isFolder && setPreviewItem(item)}
+                            onClick={() => {
+                              if (item.isFolder) {
+                                openFolder(item)
+                              } else {
+                                setPreviewItem(item)
+                              }
+                            }}
                             className="flex cursor-pointer items-center gap-3 group-hover:text-indigo-600"
                           >
                             {getItemIcon(item)}

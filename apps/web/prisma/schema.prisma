@@ -71,6 +71,7 @@ model FileMetadata {
   parentId     String?      @map("parent_id")
   name         String
   relativePath String       @map("relative_path")
+  volumeId     Int?         @map("volume_id")
   size         BigInt
   mimeType     String       @map("mime_type")
   extension    String
