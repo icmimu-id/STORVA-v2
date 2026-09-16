@@ -265,7 +265,7 @@ app.post('/volumes', authenticateToken('write'), async (req, res) => {
 
 // 5. Volumes — patch (toggle / relabel)
 app.patch('/volumes/:id', authenticateToken('write'), async (req, res) => {
-  const id = parseInt(req.params.id, 10)
+  const id = parseInt(req.params.id as string, 10)
   const vol = storageVolumes.getById(id)
   if (!vol) return res.status(404).json({ error: 'Volume not found' })
   const { enabled, label } = req.body as { enabled?: boolean; label?: string }
@@ -285,7 +285,7 @@ app.patch('/volumes/:id', authenticateToken('write'), async (req, res) => {
 
 // 6. Volumes — remove
 app.delete('/volumes/:id', authenticateToken('write'), (req, res) => {
-  const id = parseInt(req.params.id, 10)
+  const id = parseInt(req.params.id as string, 10)
   if (!storageVolumes.getById(id)) return res.status(404).json({ error: 'Volume not found' })
   if (storageVolumes.list().length <= 1) return res.status(400).json({ error: 'Cannot remove the last volume' })
   storageVolumes.remove(id)

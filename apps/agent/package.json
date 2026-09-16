@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@storva/shared-auth": "workspace:*",
+"@storva/validation": "workspace:*",
     "argon2": "^0.43.0",
     "better-sqlite3": "^11",
     "chokidar": "^4",

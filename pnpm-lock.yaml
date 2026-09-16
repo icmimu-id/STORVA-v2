@@ -17,6 +17,9 @@ importers:
       '@storva/shared-auth':
         specifier: workspace:*
         version: link:../../packages/shared-auth
+      '@storva/validation':
+        specifier: workspace:*
+        version: link:../../packages/validation
       argon2:
         specifier: ^0.43.0
         version: 0.43.1
